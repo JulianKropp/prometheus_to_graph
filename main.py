@@ -60,21 +60,25 @@ def home():
 @app.route('/graph')
 def graph():
     prometheus_server = request.args.get('server', 'http://localhost:9090')
-    query = request.args.get('query')
+    query_string = request.args.get('query')
     start_time_input = request.args.get('start', '1min')
     end_time_input = request.args.get('end', 'now')
-    title = request.args.get('title', 'Prometheus Query Result')  # Default title if not provided
+    title = request.args.get('title', 'Prometheus Query Result')
     width = request.args.get('width', 14, type=int)
     height = request.args.get('height', 8, type=int)
     xlabel = request.args.get('xlabel', 'Time')
     ylabel = request.args.get('ylabel', 'Value')
     legend = request.args.get('legend', 'true').lower() == 'true'
-    label_arg = request.args.get('label')
+    label_arg_string = request.args.get('label')
 
-    if not query:
+    if not query_string:
         return "Please provide a Prometheus query using the 'query' parameter."
 
     try:
+        # Split the query string by '|' to handle multiple queries
+        queries = query_string.split('|')
+        label_args = label_arg_string.split('|') if label_arg_string else []
+
         # Convert start_time and end_time to datetime objects
         start_time = parse_time_input(start_time_input)
         end_time = parse_time_input(end_time_input)
@@ -84,40 +88,45 @@ def graph():
 
         prom = PrometheusConnect(url=prometheus_server, disable_ssl=True)
 
-        # Fetch data from Prometheus
-        data = prom.custom_query_range(
-            query=query,
-            start_time=start_time,
-            end_time=end_time,
-            step='60s'
-        )
-
-        if not data:
-            app.logger.error(f"No data returned from Prometheus for query: {query}")
-            return jsonify({"error": "No data returned from Prometheus"}), 500
-
         # Create the graph with the specified figure size
         fig, ax = plt.subplots(figsize=(width, height))
 
-        # Loop through each series in the data
-        for series in data:
-            times = [datetime.fromtimestamp(value[0], tz=timezone.utc) for value in series['values']]
-            values = [float(value[1]) for value in series['values']]
+        # Loop through each query and plot the results
+        for i, query in enumerate(queries):
+            
+            if len(label_args) > i:
+                label_arg = label_args[i]
+            
+            data = prom.custom_query_range(
+                query=query.strip(),
+                start_time=start_time,
+                end_time=end_time,
+                step='60s'
+            )
 
-            # Determine the label
-            if label_arg and label_arg in series['metric']:
-                label = series['metric'][label_arg]
-            else:
-                # Fallback to the first available label that is not 'instance' or 'job'
-                label = 'Unknown'
-                for key in series['metric']:
-                    if key not in ['instance', 'job']:
-                        label = series['metric'][key]
-                        break
+            if not data:
+                app.logger.error(f"No data returned from Prometheus for query: {query}")
+                continue
 
-            ax.plot(times, values, label=label)
+            # Loop through each series in the data
+            for series in data:
+                times = [datetime.fromtimestamp(value[0], tz=timezone.utc) for value in series['values']]
+                values = [float(value[1]) for value in series['values']]
 
-        ax.set(xlabel=xlabel, ylabel=ylabel, title=title)  # Set the custom title
+                # Determine the label
+                if label_arg and label_arg in series['metric']:
+                    label = series['metric'][label_arg]
+                else:
+                    # Fallback to the first available label that is not 'instance' or 'job'
+                    label = 'Unknown'
+                    for key in series['metric']:
+                        if key not in ['instance', 'job']:
+                            label = series['metric'][key]
+                            break
+
+                ax.plot(times, values, label=label)
+
+        ax.set(xlabel=xlabel, ylabel=ylabel, title=title)
         ax.grid()
 
         # Automatically adjust x-axis labels to prevent overlap
