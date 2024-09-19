@@ -53,6 +53,11 @@ def parse_time_input(value):
             except ValueError:
                 raise ValueError(f"Invalid time format: {value}")
 
+def calculate_step(start_time, end_time, desired_points=100):
+    total_seconds = (end_time - start_time).total_seconds()
+    step_seconds = max(total_seconds / desired_points, 15)  # Minimum step of 15s
+    return f'{int(step_seconds)}s'
+
 @app.route('/')
 def home():
     return "Welcome to the Prometheus Matplotlib Graph Server!"
@@ -75,11 +80,9 @@ def graph():
         return "Please provide a Prometheus query using the 'query' parameter."
 
     try:
-        # Split the query string by '|' to handle multiple queries
         queries = query_string.split('|')
         label_args = label_arg_string.split('|') if label_arg_string else []
 
-        # Convert start_time and end_time to datetime objects
         start_time = parse_time_input(start_time_input)
         end_time = parse_time_input(end_time_input)
 
@@ -88,20 +91,20 @@ def graph():
 
         prom = PrometheusConnect(url=prometheus_server, disable_ssl=True)
 
+        step = calculate_step(start_time, end_time)
+
         # Create the graph with the specified figure size
         fig, ax = plt.subplots(figsize=(width, height))
 
         # Loop through each query and plot the results
         for i, query in enumerate(queries):
-            
-            if len(label_args) > i:
-                label_arg = label_args[i]
-            
+            label_arg = label_args[i] if len(label_args) > i else None
+
             data = prom.custom_query_range(
                 query=query.strip(),
                 start_time=start_time,
                 end_time=end_time,
-                step='60s'
+                step=step
             )
 
             if not data:
@@ -123,6 +126,10 @@ def graph():
                         if key not in ['instance', 'job']:
                             label = series['metric'][key]
                             break
+
+                if len(times) < 2:
+                    app.logger.warning(f"Insufficient data points for series: {series['metric']}")
+                    continue
 
                 ax.plot(times, values, label=label)
 
