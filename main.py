@@ -55,7 +55,7 @@ def parse_time_input(value):
 
 def calculate_step(start_time, end_time, desired_points=100):
     total_seconds = (end_time - start_time).total_seconds()
-    step_seconds = max(total_seconds / desired_points, 15)  # Minimum step of 15s
+    step_seconds = max(total_seconds / desired_points, 2)  # Minimum step of 2s
     return f'{int(step_seconds)}s'
 
 @app.route('/')
