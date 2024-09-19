@@ -1,9 +1,9 @@
 from flask import Flask, Response, request, jsonify
 import matplotlib.pyplot as plt
-from prometheus_api_client import PrometheusConnect # type: ignore
+from prometheus_api_client import PrometheusConnect  # type: ignore
 from io import BytesIO
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import re
 from PIL import Image
 
@@ -14,13 +14,13 @@ logging.basicConfig(level=logging.DEBUG)
 
 def parse_time(value):
     """Parse a time string like '2min', '3sec', '5day', '1year' into a timedelta object."""
-    pattern = r'(\d+)([a-z]+)'
+    pattern = r'(\d+)([a-zA-Z]+)'
     match = re.match(pattern, value)
     if not match:
         raise ValueError(f"Invalid time format: {value}")
-    
+
     amount, unit = int(match.group(1)), match.group(2)
-    
+
     if unit == 'sec':
         return timedelta(seconds=amount)
     elif unit == 'min':
@@ -34,6 +34,25 @@ def parse_time(value):
     else:
         raise ValueError(f"Unsupported time unit: {unit}")
 
+def parse_time_input(value):
+    """Parse input time string into a datetime object."""
+    if value == 'now':
+        return datetime.now(timezone.utc)
+    else:
+        # Try to parse as an absolute time
+        try:
+            dt = datetime.fromisoformat(value)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except ValueError:
+            # Try to parse as a relative time
+            try:
+                delta = parse_time(value)
+                return datetime.now(timezone.utc) - delta
+            except ValueError:
+                raise ValueError(f"Invalid time format: {value}")
+
 @app.route('/')
 def home():
     return "Welcome to the Prometheus Matplotlib Graph Server!"
@@ -42,8 +61,8 @@ def home():
 def graph():
     prometheus_server = request.args.get('server', 'http://localhost:9090')
     query = request.args.get('query')
-    start_time = request.args.get('start', '1min')
-    end_time = request.args.get('end', 'now')
+    start_time_input = request.args.get('start', '1min')
+    end_time_input = request.args.get('end', 'now')
     title = request.args.get('title', 'Prometheus Query Result')  # Default title if not provided
     width = request.args.get('width', 14, type=int)
     height = request.args.get('height', 8, type=int)
@@ -57,15 +76,11 @@ def graph():
 
     try:
         # Convert start_time and end_time to datetime objects
-        if start_time == 'now':
-            start_time = datetime.now()
-        else:
-            start_time = datetime.now() - parse_time(start_time)
+        start_time = parse_time_input(start_time_input)
+        end_time = parse_time_input(end_time_input)
 
-        if end_time == 'now':
-            end_time = datetime.now()
-        else:
-            end_time = datetime.now() - parse_time(end_time)
+        if start_time > end_time:
+            return jsonify({"error": "Start time must be before end time"}), 400
 
         prom = PrometheusConnect(url=prometheus_server, disable_ssl=True)
 
@@ -86,7 +101,7 @@ def graph():
 
         # Loop through each series in the data
         for series in data:
-            times = [datetime.fromtimestamp(value[0]) for value in series['values']]
+            times = [datetime.fromtimestamp(value[0], tz=timezone.utc) for value in series['values']]
             values = [float(value[1]) for value in series['values']]
 
             # Determine the label
@@ -112,7 +127,7 @@ def graph():
         graph_output = BytesIO()
         plt.savefig(graph_output, format='png', bbox_inches='tight')
         graph_output.seek(0)
-        
+
         # Now add the legend and save only the legend
         fig_legend = plt.figure(figsize=(width, 2))
         ax_legend = fig_legend.add_subplot(111)
@@ -143,7 +158,7 @@ def graph():
         return Response(combined_output, mimetype='image/png')
     except Exception as e:
         app.logger.error(f"An unexpected error occurred: {e}")
-        return jsonify({"error": "An unexpected error occurred"}), 500
+        return jsonify({"error": f"An unexpected error occurred: {e}"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
