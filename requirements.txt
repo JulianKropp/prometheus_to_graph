@@ -1,0 +1,6 @@
+mypy
+Flask
+matplotlib
+prometheus-api-client
+pillow
+requests
