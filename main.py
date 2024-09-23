@@ -1,3 +1,4 @@
+import math
 import statistics
 from flask import Flask, Response, request, jsonify
 import matplotlib.pyplot as plt
@@ -191,6 +192,7 @@ def stats():
     try:
         queries = query_string.split('|')
         label_args = label_arg_string.split('|') if label_arg_string else []
+        print(f"Queries: {len(queries)}")
 
         start_time = parse_time_input(start_time_input)
         end_time = parse_time_input(end_time_input)
@@ -242,79 +244,45 @@ def stats():
 
                 label_data[label].extend(values)
 
+
         # Berechne nun die Statistiken pro Label
         result = {}
         for label, values in label_data.items():
             if not values:
                 continue
 
-        try:
+            # Filtern von NaN-Werten
+            values = [v for v in values if not math.isnan(v)]
+
+            # Überprüfen, ob nach dem Filtern noch Daten vorhanden sind
+            if not values:
+                app.logger.warning(f"No valid data points for label {label} after removing NaN values.")
+                continue
+
             try:
                 mean_value = statistics.mean(values)
-            except Exception:
-                mean_value = None
-
-            try:
                 median_value = statistics.median(values)
-            except Exception:
-                median_value = None
-
-            try:
-                mode_value = statistics.mode(values)
-            except (statistics.StatisticsError, Exception):
-                mode_value = None  # Kein eindeutiger Modus
-
-            try:
-                stdev_value = statistics.stdev(values) if len(values) > 1 else None
-            except Exception:
-                stdev_value = None
-
-            try:
-                variance_value = statistics.variance(values) if len(values) > 1 else None
-            except Exception:
-                variance_value = None
-
-            try:
+                try:
+                    mode_value = statistics.mode(values)
+                except statistics.StatisticsError:
+                    mode_value = None  # Kein eindeutiger Modus
+                stdev_value = statistics.stdev(values) if len(values) > 1 else 0
+                variance_value = statistics.variance(values) if len(values) > 1 else 0
                 min_value = min(values)
-            except Exception:
-                min_value = None
-
-            try:
                 max_value = max(values)
-            except Exception:
-                max_value = None
-
-            try:
                 count = len(values)
-            except Exception:
-                count = None
-
-            try:
                 sum_value = sum(values)
-            except Exception:
-                sum_value = None
-
-            try:
-                range_value = max_value - min_value if min_value is not None and max_value is not None else None
-            except Exception:
-                range_value = None
-
-            try:
-                avg_deviation = statistics.mean([abs(x - mean_value) for x in values]) if mean_value is not None else None
-            except Exception:
-                avg_deviation = None
-
-            try:
+                range_value = max_value - min_value
+                avg_deviation = statistics.mean([abs(x - mean_value) for x in values])
+                # Berechne die Quartile
                 quartiles = statistics.quantiles(values, n=4, method='inclusive')
                 percentile_25 = quartiles[0]
                 percentile_50 = quartiles[1]
                 percentile_75 = quartiles[2]
                 iqr = percentile_75 - percentile_25  # Interquartilsabstand
-            except Exception:
-                percentile_25 = percentile_50 = percentile_75 = iqr = None
-
-        except Exception as e:
-            app.logger.error(f"Error computing statistics for label {label}: {e}")
+            except Exception as e:
+                app.logger.error(f"Error computing statistics for label {label}: {e}")
+                continue
 
             result[label] = {
                 'mean': mean_value,
