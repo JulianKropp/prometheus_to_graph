@@ -1,3 +1,4 @@
+import statistics
 from flask import Flask, Response, request, jsonify
 import matplotlib.pyplot as plt
 from prometheus_api_client import PrometheusConnect  # type: ignore
@@ -172,6 +173,126 @@ def graph():
         combined_output.seek(0)
 
         return Response(combined_output, mimetype='image/png')
+    except Exception as e:
+        app.logger.error(f"An unexpected error occurred: {e}")
+        return jsonify({"error": f"An unexpected error occurred: {e}"}), 500
+
+@app.route('/stats')
+def stats():
+    prometheus_server = request.args.get('server', 'http://localhost:9090')
+    query_string = request.args.get('query')
+    start_time_input = request.args.get('start', '1min')
+    end_time_input = request.args.get('end', 'now')
+    label_arg_string = request.args.get('label')
+
+    if not query_string:
+        return "Please provide a Prometheus query using the 'query' parameter."
+
+    try:
+        queries = query_string.split('|')
+        label_args = label_arg_string.split('|') if label_arg_string else []
+
+        start_time = parse_time_input(start_time_input)
+        end_time = parse_time_input(end_time_input)
+
+        if start_time > end_time:
+            return jsonify({"error": "Start time must be before end time"}), 400
+
+        prom = PrometheusConnect(url=prometheus_server, disable_ssl=True)
+
+        step = calculate_step(start_time, end_time)
+
+        # Initialisiere ein Dictionary, um Werte pro Label zu speichern
+        label_data = {}
+
+        # Schleife durch jede Abfrage
+        for i, query in enumerate(queries):
+            label_arg = label_args[i] if len(label_args) > i else None
+
+            data = prom.custom_query_range(
+                query=query.strip(),
+                start_time=start_time,
+                end_time=end_time,
+                step=step
+            )
+
+            if not data:
+                app.logger.error(f"No data returned from Prometheus for query: {query}")
+                continue
+
+            # Verarbeite die Daten
+            for series in data:
+                # Bestimme das Label
+                if label_arg and label_arg in series['metric']:
+                    label = series['metric'][label_arg]
+                else:
+                    if 'instance' in series['metric']:
+                        label = series['metric']['instance']
+                    elif 'job' in series['metric']:
+                        label = series['metric']['job']
+                    else:
+                        label = 'Unknown'
+
+                # Hole die Werte
+                values = [float(value[1]) for value in series['values']]
+
+                # Füge die Werte zum label_data hinzu
+                if label not in label_data:
+                    label_data[label] = []
+
+                label_data[label].extend(values)
+
+        # Berechne nun die Statistiken pro Label
+        result = {}
+        for label, values in label_data.items():
+            if not values:
+                continue
+
+            try:
+                mean_value = statistics.mean(values)
+                median_value = statistics.median(values)
+                try:
+                    mode_value = statistics.mode(values)
+                except statistics.StatisticsError:
+                    mode_value = None  # Kein eindeutiger Modus
+                stdev_value = statistics.stdev(values) if len(values) > 1 else 0
+                variance_value = statistics.variance(values) if len(values) > 1 else 0
+                min_value = min(values)
+                max_value = max(values)
+                count = len(values)
+                sum_value = sum(values)
+                range_value = max_value - min_value
+                avg_deviation = statistics.mean([abs(x - mean_value) for x in values])
+                # Berechne die Quartile
+                quartiles = statistics.quantiles(values, n=4, method='inclusive')
+                percentile_25 = quartiles[0]
+                percentile_50 = quartiles[1]
+                percentile_75 = quartiles[2]
+                iqr = percentile_75 - percentile_25  # Interquartilsabstand
+            except Exception as e:
+                app.logger.error(f"Error computing statistics for label {label}: {e}")
+                continue
+
+            result[label] = {
+                'mean': mean_value,
+                'median': median_value,
+                'mode': mode_value,
+                'stdev': stdev_value,
+                'variance': variance_value,
+                'min': min_value,
+                'max': max_value,
+                'count': count,
+                'sum': sum_value,
+                'range': range_value,
+                'average_deviation': avg_deviation,
+                'percentile_25': percentile_25,
+                'percentile_50': percentile_50,
+                'percentile_75': percentile_75,
+                'iqr': iqr
+            }
+
+        return jsonify(result)
+
     except Exception as e:
         app.logger.error(f"An unexpected error occurred: {e}")
         return jsonify({"error": f"An unexpected error occurred: {e}"}), 500
