@@ -248,30 +248,73 @@ def stats():
             if not values:
                 continue
 
+        try:
             try:
                 mean_value = statistics.mean(values)
+            except Exception:
+                mean_value = None
+
+            try:
                 median_value = statistics.median(values)
-                try:
-                    mode_value = statistics.mode(values)
-                except statistics.StatisticsError:
-                    mode_value = None  # Kein eindeutiger Modus
-                stdev_value = statistics.stdev(values) if len(values) > 1 else 0
-                variance_value = statistics.variance(values) if len(values) > 1 else 0
+            except Exception:
+                median_value = None
+
+            try:
+                mode_value = statistics.mode(values)
+            except (statistics.StatisticsError, Exception):
+                mode_value = None  # Kein eindeutiger Modus
+
+            try:
+                stdev_value = statistics.stdev(values) if len(values) > 1 else None
+            except Exception:
+                stdev_value = None
+
+            try:
+                variance_value = statistics.variance(values) if len(values) > 1 else None
+            except Exception:
+                variance_value = None
+
+            try:
                 min_value = min(values)
+            except Exception:
+                min_value = None
+
+            try:
                 max_value = max(values)
+            except Exception:
+                max_value = None
+
+            try:
                 count = len(values)
+            except Exception:
+                count = None
+
+            try:
                 sum_value = sum(values)
-                range_value = max_value - min_value
-                avg_deviation = statistics.mean([abs(x - mean_value) for x in values])
-                # Berechne die Quartile
+            except Exception:
+                sum_value = None
+
+            try:
+                range_value = max_value - min_value if min_value is not None and max_value is not None else None
+            except Exception:
+                range_value = None
+
+            try:
+                avg_deviation = statistics.mean([abs(x - mean_value) for x in values]) if mean_value is not None else None
+            except Exception:
+                avg_deviation = None
+
+            try:
                 quartiles = statistics.quantiles(values, n=4, method='inclusive')
                 percentile_25 = quartiles[0]
                 percentile_50 = quartiles[1]
                 percentile_75 = quartiles[2]
                 iqr = percentile_75 - percentile_25  # Interquartilsabstand
-            except Exception as e:
-                app.logger.error(f"Error computing statistics for label {label}: {e}")
-                continue
+            except Exception:
+                percentile_25 = percentile_50 = percentile_75 = iqr = None
+
+        except Exception as e:
+            app.logger.error(f"Error computing statistics for label {label}: {e}")
 
             result[label] = {
                 'mean': mean_value,
